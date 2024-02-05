@@ -1,3 +1,4 @@
 flask
 six
 cryptography==42.0.2
+PyJWT==2.4.0

@@ -23,3 +23,4 @@ pydocstyle
 pylint
 pylint-flask
 cryptography
+PyJWT==2.4.0
