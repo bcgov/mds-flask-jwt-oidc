@@ -22,3 +22,4 @@ pep8-naming
 pydocstyle
 pylint
 pylint-flask
+cryptography

@@ -1,3 +1,3 @@
 flask
-python-jose
 six
+cryptography==42.0.2
