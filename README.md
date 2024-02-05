@@ -1,45 +1,12 @@
-# Flask JWT OIDC
+# Multi Client JWT OIDC Manager for Flask
 
-### Simple OIDC JWT extension to protect APIs
-This is a fairly simple extension that should require minimal setup for OIDC standard services.
+### History:
 
-Currently it's testing against Keycloak, but will be adding in example configs and testing for:
-- Keycloak
-- dex
-- Google
-- Amazon IAM
-- Auth0
+`core-api` uses `flask_jwt_oidc` for it's jwt parsing, validation and role checking. This is a fiarly opinionated library and works only on flask and depends on the `config` of the flask app.
 
+Specifically, with support for the following variables in the config file:
 
-### Alternatives
-There are some great alternatives that are not so opinionated and provide more support for general JWTs
-Check out: [**Flask-JWT-Simple**](https://github.com/vimalloc/flask-jwt-simple) 
-
-### Example(s)
-There is one example under
-`example/flask_app`
-It uses pytest and sets up a dummy JWT to be used in the tests.
-### Configuration
-Create a .env file,  or OS configmap, shell exports, etc.
-```bash
-#.env
-export JWT_OIDC_WELL_KNOWN_CONFIG="https://KEYCLOAK-SERVICE/auth/realms/REALM-NAME/.well-known/openid-configuration"
-export JWT_OIDC_AUDIENCE="keycloak-client"
-export JWT_OIDC_CLIENT_SECRET="keycloak-client-secret"
 ```
-
-Create a config file, that reads in the environment variables:
-```python
-# config.py
-
-from os import environ as env
-from dotenv import load_dotenv, find_dotenv
-
-
-ENV_FILE = find_dotenv()
-if ENV_FILE:
-    load_dotenv(ENV_FILE)
-
 class Config(object):
 
     JWT_OIDC_WELL_KNOWN_CONFIG = env.get('JWT_OIDC_WELL_KNOWN_CONFIG')
@@ -47,77 +14,65 @@ class Config(object):
     JWT_OIDC_CLIENT_SECRET = env.get('JWT_OIDC_CLIENT_SECRET')
 ```
 
-Create a flask script that to use the JWT services
+as mentioned [here](https://github.com/thorwolpert/flask-jwt-oidc#configuration)
 
-Note: that roles can be checked as either *decorators* managing access to the function, or as a *function* call that returns True/False for finer grained access control in the body of the function.
-```python
-# app.py
+Github: [flask_jwt_oidc](https://github.com/thorwolpert/flask-jwt-oidc/tree/main/flask_jwt_oidc)
 
-from flask import Flask, jsonify
-from flask_cors import cross_origin
-from config import Config
-from flask_jwt_oidc import AuthError, JwtManager
+This works well as long as we have only a single OIDC client integration for one flask app.
 
+### The problem:
 
-app = Flask(__name__)
+As part of the OCIO mandate to migrate gov apps to [Gold SSO](https://bcgov.github.io/sso-requests) we now have to support multiple OIDC integration clients/audience due to the architecture pattern of Gold SSO.
 
-app.config.from_object(Config)
+Earlier in our own keycloak realm of `mds` all the integration clients - webapps and service accounts on each environment had ONE audience viz.
 
-def get_roles(dict):
-    return dict['realm_access']['roles']
-app.config['JWT_ROLE_CALLBACK'] = get_roles
+`mines-application-local`,
+`mines-application-dev`,
+`mines-application-test`, and
+`mines-application-prod`
 
-jwt = JwtManager(app)
+Now, with each integration has a different audience **`within the same environment.`**
 
-@app.route("/api/secure")
-@cross_origin(headers=["Content-Type", "Authorization"])
-@cross_origin(headers=["Access-Control-Allow-Origin", "*"]) # IRL you'd scope this to set domains
-@jwt.requires_auth
-def secure():
-    """A Bearer JWT is required to get a response from this endpoint
-    """
-    return jsonify(message="The is a secured endpoint. You provided a valid Bearer JWT to access it.")
+core-web - `mines-digital-services-mds-public-client-4414`
+bcmi - `mines-digital-services-mds-bcmi-xxxx`
+databc - `mines-digital-services-mds-databc-xxxx` etc..
 
+Our JWT parsing and authentication, authorization will need to support this.
 
-@app.route("/api/secured-and-roles")
-@cross_origin(headers=["Content-Type", "Authorization"])
-@cross_origin(headers=["Access-Control-Allow-Origin", "*"]) # IRL you'd scope this to a real domain
-@jwt.requires_auth
-def secure_with_roles():
-    """valid access token and assigned roles are required
-    """
-    if jwt.validate_roles("names_editor"):
-        return jsonify(message="This is a secured endpoint, where roles were examined in the body of the procedure! "
-                               "You provided a valid JWT token")
+> **TLDR:** `flask_jwt_oidc` needs to be enahnced to support multiple oidc audience.
 
-    raise AuthError({
-        "code": "Unauthorized",
-        "description": "You don't have access to this resource"
-    }, 403)
+### Solution:
 
+`flask_jwt_oidc_local` folder is a copy of the core `jwt_manager` implementation from the `flask_jwt_oidc`. This is extended to support multiple odic audience.
 
-@app.route("/api/secured-decorated-roles")
-@cross_origin(headers=["Content-Type", "Authorization"])
-@cross_origin(headers=["Access-Control-Allow-Origin", "*"]) # IRL you'd scope this to a real domain
-@jwt.requires_roles("names_editor")
-def secure_deco_roles():
-    """valid access token and assigned roles are required
-    """
-    return jsonify(message="This is a secured endpoint. "
-                           "The roles were checked before entering the body of the procedure! "
-                           "You provided a valid JWT token")
+Currently, we have the implementation upgraded locally.
 
+The upgraded jwt manager does the follwing:
 
-if __name__ == "__main__":
-    app.run()
+- Create multiple instances of the JWT manager using the class contructor
+- Does not depend on config.py
+- JWT manager swithcing implementation to pick the right manager for a given token.
 
-```
-## Thanks
-The following folks have provided help, feedback, PRs, etc:
-- Jamie Lennox
-- James Hollinger
+### Improvements:
 
-## TODO
-- add tests
-- add more examples
-- add tests for the OIDC service providers listed above
+**The best practice is to fork the library, upgrade it to support:**
+
+Fork for mds here: [flask-jwt-oidc](https://github.com/bcgov/flask-jwt-oidc)
+Published to PyPi here: [flask-jwt-oidc-mds](https://pypi.org/project/flask-jwt-oidc-mds)
+
+Scope for improvement:
+
+- Move the implementation to the fork
+- Write multi jwt manager test cases in the fork
+- publish to PyPi
+- Pull libraries from PyPi into core-api
+
+### Risks:
+
+**Essentially none.**
+
+We don't get to miss our much on upgrades to the original library due to the following reasons:
+
+- The `flask-jwt-oidc` library is not actively maintained with constant updates.
+- It is purpose built for flask and BC Gov use cases.
+- Upgrades are more opportunistic (for vesion changes, etc) rather than full integration compatibility.
